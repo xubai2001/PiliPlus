@@ -1,0 +1,97 @@
+name: iOS Black Screen Test
+
+on:
+  push:
+    branches: [codex/ios-black-screen-test]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: iOS ${{ matrix.variant }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, no-pip]
+    env:
+      VARIANT: ${{ matrix.variant }}
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare comparison variant
+        run: python3 tool/prepare_ios_black_screen_test.py "$VARIANT"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+
+      - name: Set version and build metadata
+        shell: pwsh
+        run: lib/scripts/build.ps1
+
+      - name: Apply upstream Flutter and dependency patches
+        shell: pwsh
+        run: lib/scripts/patch.ps1 iOS
+
+      - name: Record resolved dependencies and toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-diagnostics
+          cp pubspec.lock build-diagnostics/pubspec.lock
+          cp pili_release.json build-diagnostics/pili_release.json
+          git rev-parse HEAD > build-diagnostics/source-commit.txt
+          git diff -- ios/Runner/AppDelegate.swift ios/Runner/Info.plist > build-diagnostics/variant.patch
+          flutter --version > build-diagnostics/flutter-version.txt
+          xcodebuild -version > build-diagnostics/xcode-version.txt
+          printf '%s\n' "$VARIANT" > build-diagnostics/variant.txt
+
+      - name: Build unsigned iOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build ios --release --no-codesign --dart-define-from-file=pili_release.json --no-pub 2>&1 | tee build-diagnostics/build.log
+
+      - name: Package IPA for user re-signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/Payload
+          ditto build/ios/iphoneos/Runner.app dist/Payload/Runner.app
+          find dist/Payload/Runner.app/Frameworks -type d -name '*.framework' -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' dist/Payload/Runner.app/Info.plist
+          test -s dist/Payload/Runner.app/Runner
+          ipa="PiliPlus_2.1.6_${VARIANT}_unsigned.ipa"
+          cd dist
+          /usr/bin/zip -qry "$ipa" Payload
+          unzip -t "$ipa"
+          shasum -a 256 "$ipa" > "$ipa.sha256"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: iOS-2.1.6-${{ matrix.variant }}
+          path: |
+            dist/*.ipa
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: iOS-build-diagnostics-${{ matrix.variant }}
+          path: build-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14
