@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     name: iOS ${{ matrix.variant }}
-    runs-on: macos-26
+    runs-on: macos-15-intel
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -20,6 +20,9 @@ jobs:
     env:
       VARIANT: ${{ matrix.variant }}
     steps:
+      - name: Select Xcode 26.3
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+
       - name: Checkout test branch
         uses: actions/checkout@v7
         with:

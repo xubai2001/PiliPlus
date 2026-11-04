@@ -11,7 +11,7 @@ B 是诊断用的对照版本，尚未证明可以修复黑屏。它不提供 iO
 两个包使用相同版本的 Flutter、Dart 应用代码和依赖锁文件；A/B 应保持相同网络、账号、画质、编码和播放器设置。
 两个包保留上游 Bundle ID；如需同时安装，应在自行签名时使用不同 Bundle ID。
 
-推送此分支会触发 `iOS Black Screen Test`，使用 GitHub 的标准 `macos-26` runner。
+推送此分支会触发 `iOS Black Screen Test`，使用 GitHub 的标准 `macos-15-intel` runner 和 Xcode 26.3。
 新 fork 可能需要先在 Actions 页面启用工作流。两个任务相互独立，一个失败不会取消另一个。
 流程沿用上游 Flutter 和依赖补丁脚本，使用 `flutter build ios --release --no-codesign`，
 按标准 `Payload/Runner.app` 结构打包，校验 ZIP 结构并提供 SHA-256。
