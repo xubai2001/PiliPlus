@@ -22,7 +22,7 @@ def prepare(root: Path, variant: str) -> None:
     plist_path = root / "ios/Runner/Info.plist"
     with plist_path.open("rb") as handle:
         info = plistlib.load(handle)
-    label = "A" if variant == "baseline" else "B"
+    label = {"baseline": "A", "no-pip": "B", "recovery": "C"}[variant]
     info["CFBundleDisplayName"] = f"PiliPlus Test {label}"
     with plist_path.open("wb") as handle:
         plistlib.dump(info, handle, sort_keys=False)
@@ -31,6 +31,6 @@ def prepare(root: Path, variant: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("variant", choices=("baseline", "no-pip"))
+    parser.add_argument("variant", choices=("baseline", "no-pip", "recovery"))
     args = parser.parse_args()
     prepare(Path(__file__).resolve().parents[1], args.variant)

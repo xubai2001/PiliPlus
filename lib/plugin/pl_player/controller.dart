@@ -29,6 +29,7 @@ import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 import 'package:PiliPlus/plugin/pl_player/models/video_fit_type.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/fullscreen.dart';
+import 'package:PiliPlus/plugin/pl_player/utils/video_output_recovery.dart';
 import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/android/android_helper.dart';
@@ -678,6 +679,59 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   bool _processing = false;
   bool get processing => _processing;
 
+  final _videoOutputRecovery = VideoOutputRecovery();
+  final _videoRecoveryClock = Stopwatch()..start();
+  int _sourceGeneration = 0;
+  PlayOwner? _sourceOwner;
+
+  void _checkIOSVideoOutput(NativePlayer player, Duration position) {
+    if (!Platform.isIOS) return;
+    final state = player.state;
+    final eligible = !_processing && _playerCount > 0 && visible &&
+        _sourceOwner == _playOwner &&
+        state.playing && !state.buffering && !state.completed &&
+        !isSeeking.value && !isLive && !onlyPlayAudio.value &&
+        dataSource is NetworkSource &&
+        state.tracks.video.any((track) => track.selected &&
+            track.image != true && track.albumart != true);
+    if (!_videoOutputRecovery.observe(
+      now: _videoRecoveryClock.elapsed,
+      position: position,
+      eligible: eligible,
+      hasOutput: (state.videoParams.dw ?? 0) > 0 &&
+          (state.videoParams.dh ?? 0) > 0,
+    )) return;
+    final generation = _sourceGeneration;
+    // Defer opening media until after this position event has been dispatched.
+    Future<void>(() async {
+      if (_instance != this || _videoPlayerController != player ||
+          generation != _sourceGeneration || _processing || !visible ||
+          _sourceOwner != _playOwner || !player.state.playing ||
+          player.state.buffering || onlyPlayAudio.value ||
+          ((player.state.videoParams.dw ?? 0) > 0 &&
+              (player.state.videoParams.dh ?? 0) > 0)) return;
+      final native = <String, String>{};
+      for (final property in const [
+        'vid', 'current-vo', 'hwdec-current', 'video-codec',
+        'video-dec-params/w', 'video-dec-params/h',
+        'video-out-params/dw', 'video-out-params/dh',
+      ]) {
+        native[property] = player.getProperty(property);
+      }
+      // No stream URLs, cookies or account identifiers in this diagnostic.
+      Utils.reportError('iOS video output missing; retrying once. '
+          'generation=$generation; native=$native; '
+          'track=${player.state.track.video}; '
+          'params=${player.state.videoParams}');
+      SmartDialog.showToast('视频画面未初始化，正在重载');
+      try {
+        await refreshPlayer(automatic: true);
+      } catch (error, stack) {
+        Utils.reportError('iOS video output recovery failed: $error', stack);
+      }
+    });
+  }
+
   // offline
   bool get isFileSource => dataSource is FileSource;
 
@@ -709,6 +763,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   }) async {
     try {
       _processing = true;
+      _sourceGeneration++;
+      _sourceOwner = _playOwner;
+      _videoOutputRecovery.reset();
       this.isLive = isLive;
       _videoType = videoType ?? VideoType.ugc;
       this.width = width;
@@ -930,11 +987,13 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     );
   }
 
-  Future<void>? refreshPlayer() {
+  Future<void>? refreshPlayer({bool automatic = false}) {
     if (dataSource is FileSource) {
       return null;
     }
     if (_videoPlayerController case final ctr? when (ctr.current.isNotEmpty)) {
+      _sourceGeneration++;
+      if (!automatic) _videoOutputRecovery.reset();
       var media = ctr.current.last;
       if (!isLive) media = media.copyWith(start: ctr.state.position);
       return ctr.open(media, play: true);
@@ -1049,6 +1108,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
       /// position
       stream.position.listen((Duration position) {
+        _checkIOSVideoOutput(player, position);
         final posInSeconds = position.inSeconds;
 
         if (posInSeconds != this.position.value) {
@@ -1643,6 +1703,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
 
     _playerCount = 0;
+    _sourceGeneration++;
+    _videoOutputRecovery.reset();
     if (removeSafeArea) {
       showSystemBar();
     }

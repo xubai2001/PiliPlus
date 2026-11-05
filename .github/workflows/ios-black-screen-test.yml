@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [baseline, no-pip]
+        variant: [recovery]
     env:
       VARIANT: ${{ matrix.variant }}
     steps:
@@ -58,6 +58,12 @@ jobs:
           flutter --version > build-diagnostics/flutter-version.txt
           xcodebuild -version > build-diagnostics/xcode-version.txt
           printf '%s\n' "$VARIANT" > build-diagnostics/variant.txt
+
+      - name: Test video output recovery
+        run: flutter test test/utils/video_output_recovery_test.dart
+
+      - name: Analyze changed Dart files
+        run: dart analyze lib/plugin/pl_player/controller.dart lib/plugin/pl_player/utils/video_output_recovery.dart test/utils/video_output_recovery_test.dart
 
       - name: Build unsigned iOS app
         shell: bash
